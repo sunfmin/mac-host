@@ -172,7 +172,7 @@ log "== 已安装"
 log "命令行：$(brew_run list --formula -1 | xargs)"
 log "应用：$(brew_run list --cask -1 2>/dev/null | xargs)"
 if (( ${#FAILED[@]} )); then
-  warn "以下安装失败：${FAILED[*]}（用 .pkg 安装的应用要管理员权限，标准账号装不了）"
+  warn "以下没装上：${FAILED[*]}（原因见上面各自那行；用 .pkg 安装的应用要管理员权限，标准账号装不了）"
   exit 1
 fi
 log "== 完成。新开一个终端，brew 就在 PATH 里。"
