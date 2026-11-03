@@ -33,13 +33,16 @@ dseditgroup -o checkmember -m "$(id -un)" admin
 | 要装的 | 怎么装 | 装到哪 |
 | --- | --- | --- |
 | brew 的命令行软件、cask 应用 | `bash <本 skill 目录>/scripts/homebrew.sh <包名> cask:<包名>` | `~/homebrew`，应用进 `~/Applications` |
+| brew 要从源码编译的命令行软件（`homebrew.sh` 拒装并指过来的） | `pixi global install <包>=<版本>`（conda-forge） | `~/.pixi` |
 | node、python 这类运行时 | `mise use -g <工具>@<版本>` | mise 的目录 |
 | Python 写的命令行工具 | `uv tool install <包>` | `~/.local` |
 | npm 全局包 | `npm i -g --prefix ~/.local <包>` | `~/.local` |
 | 单个二进制 | 下载并核对 sha，放进 `~/.local/bin` | `~/.local/bin` |
 
 - **brew 只用 `~/homebrew` 这一份。** 先看 `~/homebrew/bin/brew` 在不在：在就直接用，不另装一份；不在就跑本 skill 目录下的 `scripts/homebrew.sh`（不带参数只装 Homebrew 本身），它负责下载源、核对 sha 和 `brew.env`。PATH 由 `~/.zshenv` 的托管段加载，不要再往 shell 配置里加 brew。`~/.homebrew` 不是安装位置，那是 Homebrew 的每用户配置目录。
-- **会慢的要先估时。** `~/homebrew` 不在 Homebrew 的默认位置，没有能直接用的预编译包的软件要从源码编译。
+- **brew 不从源码编。** 很多预编译包写死了 `/opt/homebrew`（13 个字符），只能原地改成不长于它的路径；`~/homebrew` 更长，这些包（postgresql、gettext、krb5……）brew 会退回源码编译，一编几十分钟。`homebrew.sh` 装之前先查，要编的就拒装，提示改用 pixi。conda-forge 的包用超长占位路径打包，装到哪都能直接用；它没有 GUI 应用和闭源软件，那些仍走 cask。
+- **pixi**：`~/.pixi/bin/pixi` 不在就从 GitHub release 下载 `pixi-aarch64-apple-darwin.tar.gz`（钉版本，核对同目录的 `.sha256`），解开放进 `~/.pixi/bin`；PATH 由 `~/.zshenv` 里 `export PATH="$PATH:$HOME/.pixi/bin"` 那行加载。装完缺的命令（例如 `pg_config`）用 `pixi global expose add --environment <环境> <命令>=<命令>` 补。
+- **会慢的要先估时。**
 - **不往系统目录或别人的 home 里写**，也不为了装东西去找 sudo。遇到 permission denied，换成上表里的路，不要提权。
 - 网络慢时，机器上有代理的话（例如 `~/mihomo/proxy.env`），只给那一条命令用：`(. ~/mihomo/proxy.env; <命令>)`。脚本和 shell 配置都不会自动挂上代理。
 

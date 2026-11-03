@@ -63,6 +63,19 @@ api_ok() {
 brew_run() {
   NONINTERACTIVE=1 HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_ENV_HINTS=1 "$PREFIX/bin/brew" "$@"
 }
+# 列出装 $1 时要从源码编译的包（它自己和还没装的依赖）。预编译包里写死了 /opt/homebrew 的
+# （cellar 不是 :any / :any_skip_relocation），~/homebrew 比它长，只能现编，一编就是几十分钟。
+needs_source() {
+  local f="$1" tag dep pending=()
+  tag="$(brew_run ruby -e 'puts Utils::Bottles.tag.to_sym')"
+  for dep in "$f" $(brew_run deps "$f"); do
+    brew_run list --formula "$dep" >/dev/null 2>&1 || pending+=("$dep")
+  done
+  (( ${#pending[@]} )) || return 0
+  brew_run info --json=v2 "${pending[@]}" | /usr/bin/jq -r --arg t "$tag" '
+    .formulae[] | ((.bottle.stable.files // {}) as $b | ($b[$t] // $b.all // {}).cellar // "none") as $c
+    | select($c != ":any" and $c != ":any_skip_relocation") | .name'
+}
 
 # ---------------------------------------------------------------------------
 log "== 软件包的下载源"
@@ -123,6 +136,12 @@ if (( ${#FORMULAE[@]} )); then
   for f in "${FORMULAE[@]}"; do
     if brew_run list --formula "$f" >/dev/null 2>&1; then
       log "  $f 已安装"
+      continue
+    fi
+    src="$(needs_source "$f" | xargs)"
+    if [[ -n "$src" ]]; then
+      warn "  $f 不装：$src 没有能用在 ~/homebrew 的预编译包，要从源码编译。改用 pixi（见 SKILL.md）：pixi global install $f"
+      FAILED+=("$f")
     elif brew_run install --formula "$f"; then
       log "  $f 安装完成"
     else
