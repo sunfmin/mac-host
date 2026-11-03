@@ -27,7 +27,7 @@ skill 和脚本假定机器已经由管理员配好以下几点，它们自己�
 
 ## 自己的 Homebrew（`scripts/homebrew.sh`）
 
-机器上的全局 Homebrew（`/opt/homebrew`）归管理员，员工往里装不了东西。每人在 `~/homebrew` 装一份自己的。
+机器上没有给员工用的全局 Homebrew：`/opt/homebrew` 要么没有，要么归管理员，员工往里装不了东西。每人在 `~/homebrew` 装一份自己的。
 
 ### 怎么执行
 
