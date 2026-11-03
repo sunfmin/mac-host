@@ -34,8 +34,10 @@ skill 和脚本假定机器已经由管理员配好以下几点，它们自己�
 在机器上，用本人账号：
 
 ```sh
-bash ~/.agents/skills/mac-host/scripts/homebrew.sh jq cask:visual-studio-code
+bash ~/.claude/skills/mac-host/scripts/homebrew.sh jq cask:visual-studio-code
 ```
+
+（只给 Claude Code 装时 skill 在 `~/.claude/skills`；同时给几个 harness 装时实体在 `~/.agents/skills`，`~/.claude/skills` 是指过去的链接，上面这条两种都能用。）
 
 从自己电脑上替某人执行（脚本从标准输入传过去，机器上不用装 skill）：
 
