@@ -28,6 +28,7 @@ skill 和脚本假定机器已经由管理员配好以下几点，它们自己�
   ```sh
   [ -x "$HOME/homebrew/bin/brew" ] && eval "$("$HOME/homebrew/bin/brew" shellenv)"
   export PATH="$HOME/.local/bin:$HOME/.local/share/mise/shims:$PATH"
+  export PATH="$PATH:$HOME/.pixi/bin"   # brew 要从源码编的命令行软件走 pixi（见 SKILL.md）
   ```
 - 装了 Xcode Command Line Tools。
 - `~/.zshenv` 里 `export DEV_PORT_BASE=<数字>`：本人的端口段起点，每人 100 个，互不重叠。`mihomo.sh` 用最后两个（`+98` 代理，`+99` 控制接口）。
