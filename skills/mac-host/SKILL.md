@@ -8,7 +8,9 @@ description: >-
   the user a file, image or page, or putting text on the clipboard; before
   installing any tool, package, runtime or app; before any sudo; when a write to
   /opt/homebrew, /usr/local or another system directory fails with permission
-  denied; or when brew, PATH or a missing command behaves unexpectedly.
+  denied; when brew, PATH or a missing command behaves unexpectedly; or when
+  the user wants their own proxy for a slow network, or Orca on their phone
+  while their computer is off.
 ---
 
 # 在这台 Mac 上做事
@@ -40,6 +42,13 @@ dseditgroup -o checkmember -m "$(id -un)" admin
 - **会慢的要先估时。** `~/homebrew` 不在 Homebrew 的默认位置，没有能直接用的预编译包的软件要从源码编译。
 - **不往系统目录或别人的 home 里写**，也不为了装东西去找 sudo。遇到 permission denied，换成上表里的路，不要提权。
 - 网络慢时，机器上有代理的话（例如 `~/mihomo/proxy.env`），只给那一条命令用：`(. ~/mihomo/proxy.env; <命令>)`。脚本和 shell 配置都不会自动挂上代理。
+
+## 代理和手机用 Orca
+
+本 skill 目录下还有两个脚本，人要的时候执行。参数和行为写在各自开头的注释里，先读再执行：
+
+- `scripts/mihomo.sh`：本人自己的代理（mihomo），国内网络用。第一次要人给订阅地址（`--subscription <地址>`，它等同于密码，不要回显）；机器重启后代理不会自己起来，下载变慢时也是，都不带参数重新执行，它会重新选一个下载够快的节点。
+- `scripts/orca-server.sh`：让人的手机在电脑关着时也能用 Orca。要人自己用屏幕共享登录一次桌面，脚本最后输出的步骤原样转给人；手机配对是 `--pair-mobile`。
 
 ## 给人看东西
 
