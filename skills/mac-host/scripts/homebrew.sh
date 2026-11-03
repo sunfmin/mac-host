@@ -2,7 +2,7 @@
 # 在自己的 home 目录里装一份自己的 Homebrew（~/homebrew），再装需要的软件。给没有 sudo 的标准账号用。
 # 用你自己的账号执行（不是 root），怎么执行见本仓库的 README.md。可以重复执行：已装的跳过，Homebrew 本身更新到最新版本。
 #
-# 机器上的全局 Homebrew（/opt/homebrew）归管理员，标准账号往里装不了东西；每人用自己的这份。
+# 机器上没有给员工用的全局 Homebrew：/opt/homebrew 要么没有，要么归管理员，标准账号往里装不了东西；每人用自己的这份。
 # 它不在 Homebrew 的默认位置，没有能直接用的预编译包的软件要从源码编译，会慢。
 # PATH 不归本脚本管：机器要在 ~/.zshenv 里加载 ~/homebrew/bin/brew（见 README.md「机器要满足的」）。
 #
