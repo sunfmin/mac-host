@@ -1,7 +1,7 @@
 #!/bin/bash
 # 【ssh 本人】在自己的账号里装一个 mihomo 代理（Clash Meta 内核），国内网络访问 GitHub、Anthropic 等慢时用。
 # 用你自己的账号执行，命令见 mac-host 的 README「代理」。可以重复执行：每次重新下载订阅，mihomo 有新版本时顺便更新，
-# 再量一次现在用的节点，下载太慢就换成第一个够快的（见「选节点」）。
+# 再量一次现在用的节点，下载太慢就把所有节点同时量一遍，换成最快的（见「选节点」）。
 # 国外的机器用不上它。
 #
 # 只是装好、跑起来，不替你挂上：任何脚本和 shell 配置都不会自动用它。
@@ -122,6 +122,14 @@ log "节点 $(awk '/^proxies:/ { f = 1; next } /^[^ \t#-]/ { f = 0 } f && /^ *- 
 OVERRIDDEN="port socks-port redir-port tproxy-port mixed-port allow-lan bind-address lan-allowed-ips"
 OVERRIDDEN="$OVERRIDDEN external-controller external-controller-tls external-controller-unix"
 OVERRIDDEN="$OVERRIDDEN external-controller-cors secret external-ui tun log-level geodata-mode geox-url profile"
+# 订阅的内容，去掉顶层设置 $1（空格分隔）连同下属内容。
+sub_config() {
+  awk -v keys="$1" '
+    BEGIN { n = split(keys, k, " "); for (i = 1; i <= n; i++) drop[k[i]] = 1 }
+    /^[^ \t#-]/ { key = $0; sub(/:.*/, "", key); skip = (key in drop) }
+    !skip
+  ' "$WORK/sub.yaml"
+}
 SECRET_FILE="$DIR/controller.secret"
 if [[ ! -s "$SECRET_FILE" ]]; then
   # head 放在管道上游：写成 tr ... | head -c N 的话，head 取够就退出，tr 收到 SIGPIPE（退出码 141），
@@ -152,11 +160,7 @@ geox-url:
   geosite: "$GEO_BASE/geosite.dat"
 
 EOF
-  awk -v keys="$OVERRIDDEN" '
-    BEGIN { n = split(keys, k, " "); for (i = 1; i <= n; i++) drop[k[i]] = 1 }
-    /^[^ \t#-]/ { key = $0; sub(/:.*/, "", key); skip = (key in drop) }
-    !skip
-  ' "$WORK/sub.yaml"
+  sub_config "$OVERRIDDEN"
 } > "$WORK/config.yaml"
 
 # ---------------------------------------------------------------------------
@@ -245,27 +249,31 @@ cat > "$AGENT" <<EOF
 </plist>
 EOF
 plutil -lint "$AGENT" >/dev/null || die "LaunchAgent 格式不对：$AGENT"
+# 端口空着才起；起来后等它开始监听。
+start_agent() {
+  # 停掉自己的之后端口还有人听，就是别的程序（例如你的 dev server）占了它。
+  ! nc -z 127.0.0.1 "$PORT" >/dev/null 2>&1 || die "端口 $PORT 被别的程序占用了：它是你端口段里留给代理的，把那个程序换个端口。"
+  launchctl bootstrap "$DOMAIN" "$AGENT" || warn "launchctl bootstrap 返回失败，看它是否仍然起来了。"
+  for _ in $(seq 1 30); do
+    nc -z 127.0.0.1 "$PORT" >/dev/null 2>&1 && break
+    sleep 1
+  done
+  if ! nc -z 127.0.0.1 "$PORT" >/dev/null 2>&1; then
+    tail -20 "$DIR/mihomo.log" || true
+    # 上次执行留下的 PROXY_ENV 指向的就是这个端口；代理没起来还留着它，加载它的终端会走这个不通的代理。
+    rm -f "$PROXY_ENV"
+    die "mihomo 没有在 30 秒内开始监听 ${PORT}，已删除 $PROXY_ENV。"
+  fi
+}
 # 重启以加载新的程序和配置；正在走代理的连接会断一下。
 stop_agent
-# 停掉自己的之后端口还有人听，就是别的程序（例如你的 dev server）占了它。
-! nc -z 127.0.0.1 "$PORT" >/dev/null 2>&1 || die "端口 $PORT 被别的程序占用了：它是你端口段里留给代理的，把那个程序换个端口。"
-launchctl bootstrap "$DOMAIN" "$AGENT" || warn "launchctl bootstrap 返回失败，看它是否仍然起来了。"
-for _ in $(seq 1 30); do
-  nc -z 127.0.0.1 "$PORT" >/dev/null 2>&1 && break
-  sleep 1
-done
-if ! nc -z 127.0.0.1 "$PORT" >/dev/null 2>&1; then
-  tail -20 "$DIR/mihomo.log" || true
-  # 上次执行留下的 PROXY_ENV 指向的就是这个端口；代理没起来还留着它，加载它的终端会走这个不通的代理。
-  rm -f "$PROXY_ENV"
-  die "mihomo 没有在 30 秒内开始监听 ${PORT}，已删除 $PROXY_ENV。"
-fi
+start_agent
 log "已在运行：127.0.0.1:$PORT"
 
 # ---------------------------------------------------------------------------
 # 订阅自带的 🎏Auto 只按延迟选节点，不看速度。2026-11-03 在 Mac Mini 上：它选的节点下载 Claude Code
 # 只有 180KB/s（313MB 要半小时），同一订阅里别的节点有 4MB/s，也有完全下不动的。
-# 所以量一下现在用的节点，慢就在 SPEED_GROUP 的节点里按顺序换，用第一个够快的，不再往下试。
+# 所以先量现在用的节点，够快就不动（手动选的也留着）；慢了就把 SPEED_GROUP 的节点同时量一遍，换成最快的。
 # 选择存在 cache.db，以后照旧；重新执行本脚本会再量一次。
 # 量两样大文件的前 4MB：Claude Code 的程序（走 💡AI 分组，它默认跟着 SPEED_GROUP）和 GitHub 上的发布文件
 # （mise、Homebrew 从这里下）。Anthropic 不服务的地区（例如香港）的节点拿不到 Claude Code，自然不算快。
@@ -275,55 +283,125 @@ SPEED_MIN_KB=1024       # 两样都不低于 1MB/s 才算快
 CLAUDE_BASE="https://downloads.claude.ai/claude-code-releases"
 GITHUB_TEST="https://github.com/astral-sh/uv/releases/download/0.13.6/uv-aarch64-apple-darwin.tar.gz"   # 14MB，版本固定
 GROUP_URI="$(jq -rn --arg s "$SPEED_GROUP" '$s|@uri')"
+MAIN_PROXY="http://127.0.0.1:$PORT"
 # 控制接口的 /proxies（$1 为空）或 /proxies/<分组>（$1 是 GROUP_URI），其余参数给 curl。
 api() { local p="$1"; shift; curl -fsS --max-time 10 -H "Authorization: Bearer $(cat "$SECRET_FILE")" "$@" "http://$CONTROLLER/proxies/$p"; }
-via_proxy() { curl -fsS -x "http://127.0.0.1:$PORT" "$@"; }
-# 经代理下载 $1 的前 4MB，打印 KB/s。最多下 6 秒（6 秒下不完 4MB 本来就不够快），没下完的按已下的算；
+# 经代理 $1 下载 $2 的前 4MB，打印 KB/s。最多下 6 秒（6 秒下不完 4MB 本来就不够快），没下完的按已下的算；
 # 连不上、返回 403 这类失败是 0。
 speed_kb() {
   local s
-  s="$(via_proxy -o /dev/null -r 0-4194303 -L --max-time 6 -w '%{speed_download}' "$1" 2>/dev/null || true)"
+  s="$(curl -fsS -x "$1" -o /dev/null -r 0-4194303 -L --max-time 6 -w '%{speed_download}' "$2" 2>/dev/null || true)"
   awk -v s="${s:-0}" 'BEGIN { printf "%d", s / 1024 }'
 }
-# 现在选中的节点够不够快；量到的写进 MEASURED。Claude 的慢了就不量 GitHub 的。
-fast_now() {
-  local v c g
-  v="$(via_proxy --max-time 10 "$CLAUDE_BASE/latest" 2>/dev/null)" || v=""
-  c=0; [[ -z "$v" ]] || c="$(speed_kb "$CLAUDE_BASE/$v/darwin-arm64/claude")"
-  MEASURED="Claude ${c}KB/s，GitHub 没量"
-  (( c >= SPEED_MIN_KB )) || return 1
-  g="$(speed_kb "$GITHUB_TEST")"
-  MEASURED="Claude ${c}KB/s，GitHub ${g}KB/s"
-  (( g >= SPEED_MIN_KB ))
+# 经代理 $1 同时量两样，把「Claude 的 KB/s GitHub 的 KB/s」写进文件 $2。
+measure() {
+  local v c gp
+  speed_kb "$1" "$GITHUB_TEST" > "$2.github" &
+  gp=$!
+  v="$(curl -fsS -x "$1" --max-time 10 "$CLAUDE_BASE/latest" 2>/dev/null || true)"
+  c=0; [[ -z "$v" ]] || c="$(speed_kb "$1" "$CLAUDE_BASE/$v/darwin-arm64/claude")"
+  wait "$gp" || true
+  echo "$c $(cat "$2.github")" > "$2"
 }
+# measure 写的文件 $1：两样都够快吗；打印出来是什么样。
+fast() { local c g; read -r c g < "$1"; (( c >= SPEED_MIN_KB && g >= SPEED_MIN_KB )); }
+said() { local c g; read -r c g < "$1"; echo "Claude ${c}KB/s，GitHub ${g}KB/s"; }
 select_node() { api "$GROUP_URI" -o /dev/null -X PUT -d "$(jq -cn --arg n "$1" '{name: $n}')"; }
 # 分组层层往下跟，最后实际用的节点。
 current_node() {
   api "" | jq -r --arg g "$SPEED_GROUP" '.proxies as $p | def r: if ($p[.].now // "") != "" then $p[.].now | r else . end; $g | r'
 }
+# 同时量 nodes.txt 里的每个节点，第 i 行（从 0 数）的结果写进 $WORK/probe/<i>。
+# 分组一次只能选一个节点，所以另起一个只用来测速的 mihomo：节点和分组跟正式的一样来自订阅，
+# 但入口要用户名，规则按用户名（IN-USER）把用户 n<i> 的流量交给第 i 个节点。
+# 它用正式代理的端口（不多占你端口段里的端口），所以调用前要先停掉正式的。
+# 订阅里这几项去掉：mode、rules 这一类由下面重写；skip-auth-prefixes 会让本机连接不带用户名，规则就分不出节点；
+# listeners、tunnels 会多开端口；dns 可能要先从 GitHub 下地理数据库（国内很慢），测速用系统的 DNS 就够了。
+PROBE_DROPPED="mode rules rule-providers sub-rules authentication skip-auth-prefixes listeners tunnels dns"
+probe_all() {
+  local p q i pids=""
+  ! nc -z 127.0.0.1 "$PORT" >/dev/null 2>&1 || return 1
+  mkdir -m 700 "$WORK/probe"
+  {
+    cat <<EOF
+mixed-port: $PORT
+allow-lan: false
+bind-address: 127.0.0.1
+log-level: warning
+mode: rule
+authentication:
+EOF
+    awk '{ printf "  - \"n%d:x\"\n", NR - 1 }' "$WORK/nodes.txt"
+    sub_config "$OVERRIDDEN $PROBE_DROPPED"
+    echo "rules:"
+    jq -Rnr '[inputs] | to_entries[] | "  - " + ("IN-USER,n\(.key),\(.value)" | tojson)' "$WORK/nodes.txt"
+    echo "  - MATCH,REJECT"
+  } > "$WORK/probe/config.yaml"
+  "$BIN" -d "$WORK/probe" -f "$WORK/probe/config.yaml" > "$WORK/probe/mihomo.log" 2>&1 &
+  p=$!
+  for _ in $(seq 1 20); do
+    nc -z 127.0.0.1 "$PORT" >/dev/null 2>&1 && break
+    sleep 0.5
+  done
+  if ! nc -z 127.0.0.1 "$PORT" >/dev/null 2>&1; then
+    tail -5 "$WORK/probe/mihomo.log" || true
+    kill "$p" 2>/dev/null || true
+    wait "$p" 2>/dev/null || true
+    return 1
+  fi
+  i=0
+  while IFS= read -r _; do
+    measure "http://n$i:x@127.0.0.1:$PORT" "$WORK/probe/$i" &
+    pids="$pids $!"
+    i=$(( i + 1 ))
+  done < "$WORK/nodes.txt"
+  for q in $pids; do wait "$q" || true; done
+  kill "$p" 2>/dev/null || true
+  wait "$p" 2>/dev/null || true
+}
 if ! api "" > "$WORK/proxies.json" || ! jq -e --arg g "$SPEED_GROUP" '.proxies[$g].all' "$WORK/proxies.json" >/dev/null; then
   warn "控制接口里没有 $SPEED_GROUP 分组（分组名以订阅为准），不选节点。"
 else
   CUR="$(current_node)"
-  if fast_now; then
-    log "现在的节点 $CUR 够快：$MEASURED"
+  # 只要真正的节点，不要分组和直连。
+  jq -r --arg g "$SPEED_GROUP" '.proxies as $p | $p[$g].all[]
+    | select(($p[.].type // "") | test("^(Selector|URLTest|Fallback|LoadBalance|Relay|Direct|Reject|RejectDrop|Pass|Compatible)$") | not)' \
+    "$WORK/proxies.json" > "$WORK/nodes.txt"
+  measure "$MAIN_PROXY" "$WORK/now"
+  if fast "$WORK/now"; then
+    log "现在的节点 $CUR 够快：$(said "$WORK/now")"
+  elif [[ ! -s "$WORK/nodes.txt" ]]; then
+    warn "现在的节点 $CUR 太慢：$(said "$WORK/now")，$SPEED_GROUP 里又没有别的节点可换。"
   else
-    log "现在的节点 $CUR 太慢：$MEASURED。按顺序换，用第一个够快的："
-    ORIG="$(jq -r --arg g "$SPEED_GROUP" '.proxies[$g].now' "$WORK/proxies.json")"
-    # 只要真正的节点，不要分组和直连。
-    jq -r --arg g "$SPEED_GROUP" '.proxies as $p | $p[$g].all[]
-      | select(($p[.].type // "") | test("^(Selector|URLTest|Fallback|LoadBalance|Relay|Direct|Reject|RejectDrop|Pass|Compatible)$") | not)' \
-      "$WORK/proxies.json" > "$WORK/nodes.txt"
-    PICKED=""
-    while IFS= read -r n; do
-      [[ "$n" != "$CUR" ]] || continue
-      select_node "$n"
-      if fast_now; then PICKED="$n"; log "  $n：$MEASURED，就用它"; break; fi
-      log "  $n：$MEASURED"
-    done < "$WORK/nodes.txt"
-    if [[ -z "$PICKED" ]]; then
-      select_node "$ORIG"
-      warn "没有一个节点两样都到 1MB/s，改回原来的 $ORIG。装大东西会很慢，过一阵重新执行本脚本再选。"
+    log "现在的节点 $CUR 太慢：$(said "$WORK/now")。$(wc -l < "$WORK/nodes.txt" | xargs) 个节点同时量，代理停十几秒："
+    stop_agent
+    PROBED=1
+    probe_all || PROBED=0
+    start_agent
+    if (( ! PROBED )); then
+      warn "测速用的 mihomo 没起来，不换节点。"
+    else
+      # 按两样里慢的那样排，一样时看两样之和。同时下载会分走本机带宽，这里的数比单独量的低，只用来排先后。
+      i=0
+      while IFS= read -r n; do
+        c=0; g=0
+        if [[ -s "$WORK/probe/$i" ]]; then read -r c g < "$WORK/probe/$i"; fi
+        printf '%d\t%d\t%d\t%d\t%s\n' "$(( c < g ? c : g ))" "$(( c + g ))" "$c" "$g" "$n"
+        i=$(( i + 1 ))
+      done < "$WORK/nodes.txt" | sort -t $'\t' -k1,1nr -k2,2nr > "$WORK/ranked.tsv"
+      while IFS=$'\t' read -r _ _ c g n; do log "  $n：Claude ${c}KB/s，GitHub ${g}KB/s"; done < "$WORK/ranked.tsv"
+      IFS=$'\t' read -r BEST_MIN _ _ _ BEST < "$WORK/ranked.tsv"
+      if (( BEST_MIN == 0 )); then
+        warn "没有一个节点两样都下得动，不换节点。装大东西会很慢，过一阵重新执行本脚本再选。"
+      else
+        select_node "$BEST"
+        measure "$MAIN_PROXY" "$WORK/best"
+        if fast "$WORK/best"; then
+          log "换成最快的 $BEST，单独再量：$(said "$WORK/best")"
+        else
+          warn "换成了最快的 $BEST，但单独再量也不够 1MB/s：$(said "$WORK/best")。装大东西会很慢，过一阵重新执行本脚本再选。"
+        fi
+      fi
     fi
   fi
 fi
