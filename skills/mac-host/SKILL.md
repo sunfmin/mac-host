@@ -57,5 +57,9 @@ dseditgroup -o checkmember -m "$(id -un)" admin
 
 这台机器的桌面和剪贴板都不是人手边的那个：
 
-- **看文件**（图片、页面、文档……）：用 `orca file open <绝对路径> --focus`，它会在人的 Orca 里打开一个标签页。多个文件时，前面几个不带 `--focus` 逐个打开，最后对要先看的那个带 `--focus`。不要用这台机器的桌面程序打开（`open`、`qlmanage`、Preview、Safari、Finder……），没人看得到。
+- **看文件**（图片、页面、文档……）：用 `orca file open <绝对路径> --focus`，它会在人的 Orca 里打开一个标签页。路径要在某个 Orca worktree 里面；临时目录（`/tmp`、`$TMPDIR`）里的文件先复制到当前 repo 里被 git 忽略的目录再打开。多个文件时，前面几个不带 `--focus` 逐个打开，最后对要先看的那个带 `--focus`。不要用这台机器的桌面程序打开（`open`、`qlmanage`、Preview、Safari、Finder……），没人看得到。
+- **看 HTML 页面**：文件标签页显示不正常（看到的是源码，或者 CDN 脚本、图表没跑起来）时，在这台机器上起一个只监听本机的静态服务器，再用 Orca 的内置浏览器打开它：
+  - `uv run --no-project python -m http.server <端口> --bind 127.0.0.1`，在页面所在目录后台跑；
+  - `orca tab create --url http://127.0.0.1:<端口>/<文件名>`。Orca 的内置浏览器能访问这台机器的 `127.0.0.1`，不用监听公网或 tailnet 地址；
+  - 确认渲染出来了：`orca eval --expression 'document.title'` 返回页面标题。用完把服务器停掉。
 - **要人拿去别处发的文本**：在回复里给出全文。`pbcopy` 放进的是这台机器的剪贴板，人那边拿不到，不要用它代替全文。
