@@ -16,7 +16,7 @@ skill 目录里带着三个脚本，装 skill 时一起装上，人和 agent 都
 | --- | --- |
 | `scripts/homebrew.sh` | 自己的 Homebrew，装命令行软件和应用 |
 | `scripts/mihomo.sh` | 国内网络用：自己的代理 |
-| `scripts/orca-server.sh` | 电脑关着时手机也能用 Orca |
+| `scripts/orca-server.sh` | 电脑关着时手机也能用 Orca：给电脑和手机配对常驻的 Orca 服务端 |
 
 ## 机器要满足的
 
@@ -31,11 +31,13 @@ skill 和脚本假定机器已经由管理员配好以下几点，它们自己�
   export PATH="$PATH:$HOME/.pixi/bin"   # brew 要从源码编的命令行软件走 pixi（见 SKILL.md）
   ```
 - 装了 Xcode Command Line Tools。
-- `~/.zshenv` 里 `export DEV_PORT_BASE=<数字>`：本人的端口段起点，每人 100 个，互不重叠。`mihomo.sh` 用最后两个（`+98` 代理，`+99` 控制接口）。
+- `~/.zshenv` 里 `export DEV_PORT_BASE=<数字>`：本人的端口段起点，每人 100 个，互不重叠。`mihomo.sh` 用最后两个（`+98` 代理，`+99` 控制接口），常驻的 Orca 服务端用 `+97`。
 - 用 `orca-server.sh` 的，还要：
-  - 这个账号能用屏幕共享登录（在屏幕共享的名单里，并且知道自己的密码）。
-  - Tailscale ACL 让本人的设备连得到这台机器的 5900（屏幕共享）和 6768-6799（Orca 服务端，每人一个）。
-  - 应用防火墙自动放行有开发者签名的应用（`socketfilterfw --setallowsignedapp on`）。
+  - 管理员给本人装好常驻的 Orca 服务端：LaunchDaemon `orca-studio.orca-server.<用户>`，以本人身份运行
+    `~/Applications/Orca.app` 里的 `orca serve --supervise --no-pairing --port $DEV_PORT_BASE+97 --pairing-address <Tailscale IP>`，
+    环境变量 `ORCA_SERVE_RUNTIME=orcad`（mac-studio-setup 的 `ssh/root/35-orca-server.sh` 就是做这个的）。
+  - Tailscale ACL 让本人的设备连得到这台机器的 `$DEV_PORT_BASE+97`。
+  - 应用防火墙自动放行有开发者签名的程序（`socketfilterfw --setallowsigned on --setallowsignedapp on`）：监听端口的是 Orca 自带的 node，有签名。
 
 ## 怎么执行
 
@@ -108,48 +110,30 @@ bash ~/.claude/skills/mac-host/scripts/mihomo.sh                            # �
 ## 电脑关着时手机也能用（`scripts/orca-server.sh`）
 
 默认做法里，自己电脑上的 Orca 通过 SSH 驱动这台机器，手机配对的也是电脑上的 Orca，所以电脑一关手机就用不了。
-要让手机直接连这台机器，每人要在这台机器上常驻一个自己的 Orca，作为 [Remote Orca Server](https://onorca.dev/docs/remote-servers)，电脑和手机都连它。
+要让手机直接连这台机器，每人在这台机器上常驻一个自己的 Orca 服务端，作为 [Remote Orca Server](https://onorca.dev/docs/remote-servers)，电脑和手机都连它。
 
 ```
 自己的电脑（Orca 客户端）──┐
-                          ├─Tailscale─▶ 这台机器：alice 的桌面会话里的 Orca（端口 6768-6799 之一）
+                          ├─Tailscale─▶ 这台机器：以 alice 身份常驻的 orca serve（alice 端口段的 +97）
 自己的手机（Orca Mobile）──┘
 ```
 
-为什么不能只靠 SSH（读 Orca 源码得出）：
+服务端由管理员装，本人只配对。2026-11-10 在 Mac Mini 上实测（Orca 1.4.255）：
 
-- Orca 走 SSH 目标时在这台机器上起的服务端（orcad）只监听 127.0.0.1，电脑断开 15 分钟后自己退出，也不提供手机配对。
-- macOS 上 `orca serve` 用的是完整的 Orca 桌面程序，必须在本人的桌面会话里启动；从 SSH 启动会在注册应用时崩溃（SIGABRT）。
-  `orca serve service install` 装的 LaunchAgent 也是装进桌面会话的，同样要求本人登录了桌面。
+- Orca 走 SSH 目标时在这台机器上起的服务端只监听 127.0.0.1，电脑断开 15 分钟后自己退出，也不提供手机配对。
+- `orca serve` 在 macOS 上默认跑 Electron，要有人登录桌面。加 `ORCA_SERVE_RUNTIME=orcad` 改跑纯 Node 的服务端，SSH 里、没人登录桌面也能起来，5 秒就绪，终端在服务端重启后还在。
+- 本人装不了不依赖桌面的常驻服务：`orca serve service install` 装进 `gui/<UID>`，没登录桌面时报 125；本人 `launchctl bootstrap user/<UID>` 报 5。它生成的配置里也没有 `ORCA_SERVE_RUNTIME=orcad`。所以由管理员装一个 LaunchDaemon，以本人身份运行，开机就起（见「机器要满足的」）。
+- 服务端监听 0.0.0.0（手机配对要这样），默认只接受本机、局域网和 Tailscale 来的连接，每台设备有自己的令牌。
 
-所以 `orca-server.sh` 做的是：
+`orca-server.sh` 用 `orca pair` 向正在运行的服务端要配对，不重启它，已经连着的设备不受影响：
 
-- 还没装 Orca 的话，用本人的 Homebrew 装进 `~/Applications`（所以要先有自己的 Homebrew）；
-- 在本人 `~/Library/LaunchAgents` 放一个 LaunchAgent，登录桌面时自动在后台打开 Orca；
-- 输出接下来的步骤：屏幕共享登录一次 → 在那里的 Orca 生成 Access Link 给自己电脑 → 再执行一次 `orca-server.sh --pair-mobile`，用 Orca Mobile 扫终端里的二维码。
-
-机器要满足的几项（屏幕共享、ACL 端口、防火墙）见「机器要满足的」；脚本会检查 Orca 的签名和自己有没有屏幕共享权限。
-Orca 服务端从 6768 起找空闲端口，每人一个，最多 32 人；找到后会记住，重启后还用同一个，配对不会失效。
-
-参数：`--pair-mobile` 手机配对（见下）；`--off` 不再常驻（删掉 LaunchAgent，Orca 本身不卸载）。
-
-### 手机配对（`--pair-mobile`）
-
-不用到桌面版里点：登录过桌面后执行 `orca-server.sh --pair-mobile`，终端里会打出二维码，用 Orca Mobile 扫。手机要先连上 Tailscale。
-
-- **为什么要退出桌面版**：不经过界面生成手机配对的只有 `orca serve --mobile-pairing`，而桌面版开着时它不启动，因为一份配置只能有一个 Orca 在服务。所以脚本先退出桌面版，在本人的桌面会话里用 `orca serve` 打出二维码；等手机连上，再停掉它，重新打开桌面版。两者的配对记录在同一个地方（`~/Library/Application Support/orca`），桌面版重新打开后还监听同一个端口，手机会自己重连。
-- **智能体不受影响**：脚本只结束桌面版的主程序。终端和里面的智能体跑在单独的 Orca Terminal 进程里，照常运行。桌面版 30 秒内没退出（例如弹了确认框）时，脚本报错退出，不会强杀。
-- **SSH 断了也没关系**：配对由 launchd 在本人桌面会话里运行的 `~/.orca-pair/pair.sh` 完成，SSH 这边只打出二维码、转述进度。SSH 断开后，pair.sh 照样等到手机连上或 5 分钟超时，再收尾、重新打开桌面版。收尾不能放在 SSH 里，因为 Tailscale SSH 断开时先发 SIGHUP、紧接着发 SIGKILL，连 EXIT trap 都来不及跑（2026-11 实测）。断开的话 `~/.orca-pair` 会留到下次执行 `--pair-mobile`，里面没有配对码。
-- **配对码等同于手机的登录凭据**：收尾时会删掉 `orca serve` 的输出。二维码只出现在执行者的终端里。
-- 2026-11-02 在 Mac Mini 上实测（二维码出来后故意断开 SSH）：开始配对 3 秒后打出二维码；扫码后 19 秒手机连上；再过 2 秒，桌面版重新打开并监听 `*:6770`（和 `orca serve` 是同一个端口），手机自己重连。
+- 不带参数：打出给电脑用的 Access Link，在自己电脑的 Orca 里 Settings → Remote Orca Servers → Add Server 粘贴。
+- `--pair-mobile`：打出二维码，用 Orca Mobile 扫，手机要先连上 Tailscale。
+- `--rotate`：作废还没用过的配对码、换一个新的。没用过的配对码会一直有效，直到换掉。
+- 配对码等同于登录凭据，只打在执行者的终端里。
+- 本脚本旧版本装的 LaunchAgent（登录桌面时打开桌面版 Orca）会被删掉：桌面版开着时，常驻的服务端会一直等它退出。
 
 限制：
 
-- **机器重启后，每个人都要用屏幕共享再登录一次桌面**，Orca 才会起来（不用重新配对）。macOS 只能自动登录一个账号。
-  这一步用 iPhone 也能做，不用开电脑：iPhone 上没有苹果官方的屏幕共享，用 [Screens 5](https://help.edovia.com/screens-5/how-to/sharing-mac-session)（Edovia）。
-  它用 macOS 账号的用户名和密码登录，机器上已经有人登录时会让你选 **Log in as yourself**，开一个自己的独立会话。
-  只认 VNC 密码的客户端做不到这一点，只能连到别人正在用的屏幕；Jump Desktop 目前也不支持。（据文档和论坛，未在本机实测。）
-- 登录后关掉屏幕共享窗口即可，**不要注销**，注销会结束 Orca。
-- **升级 Orca**：Orca 装在本人的 `~/Applications`，归本人所有。应用内更新能不能直接装、`homebrew.sh --upgrade` 会不会升级它，都还没实测。服务端和电脑上的 Orca 版本差太多会连不上。
-- 每个人的 Orca 都是一整个桌面程序，人多时注意内存。
 - 用 SSH 目标建的 worktree 仍归电脑上的 Orca 管，电脑关了手机看不到；要手机能用，在 Remote Orca Server 下建。
+- **升级 Orca**：Orca 装在本人的 `~/Applications`，orcad 没有应用内更新。本人执行 `~/homebrew/bin/brew upgrade --cask stablyai/orca/orca`（2026-11-10 实测 1.4.249 → 1.4.255），再请管理员重新执行 35-orca-server.sh 让服务端换到新版。`homebrew.sh --upgrade` 会不会升级它没实测。服务端和电脑上的 Orca 版本差太多会连不上。
