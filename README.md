@@ -16,7 +16,7 @@ skill 目录里带着三个脚本，装 skill 时一起装上，人和 agent 都
 | --- | --- |
 | `scripts/homebrew.sh` | 自己的 Homebrew，装命令行软件和应用 |
 | `scripts/mihomo.sh` | 国内网络用：自己的代理 |
-| `scripts/orca-server.sh` | 电脑关着时手机也能用 Orca：给电脑和手机配对常驻的 Orca 服务端 |
+| `scripts/orca-server.sh` | 电脑关着时手机也能用 Orca：常驻自己的 Orca 服务端，给电脑和手机配对 |
 
 ## 机器要满足的
 
@@ -33,11 +33,9 @@ skill 和脚本假定机器已经由管理员配好以下几点，它们自己�
 - 装了 Xcode Command Line Tools。
 - `~/.zshenv` 里 `export DEV_PORT_BASE=<数字>`：本人的端口段起点，每人 100 个，互不重叠。`mihomo.sh` 用最后两个（`+98` 代理，`+99` 控制接口），常驻的 Orca 服务端用 `+97`。
 - 用 `orca-server.sh` 的，还要：
-  - 管理员给本人装好常驻的 Orca 服务端：LaunchDaemon `orca-studio.orca-server.<用户>`，以本人身份运行
-    `~/Applications/Orca.app` 里的 `orca serve --supervise --no-pairing --port $DEV_PORT_BASE+97 --pairing-address <Tailscale IP>`，
-    环境变量 `ORCA_SERVE_RUNTIME=orcad`（mac-studio-setup 的 `ssh/root/35-orca-server.sh` 就是做这个的）。
-  - Tailscale ACL 让本人的设备连得到这台机器的 `$DEV_PORT_BASE+97`。
+  - Tailscale ACL 让本人的设备连得到这台机器上本人的 `$DEV_PORT_BASE+97`。
   - 应用防火墙自动放行有开发者签名的程序（`socketfilterfw --setallowsigned on --setallowsignedapp on`）：监听端口的是 Orca 自带的 node，有签名。
+  - 想在 Orca 起的终端里用钥匙串（例如 mytokens）的，这台机器开机后要有人登录过一次桌面（屏幕共享也行），同 SSH 里一样。
 
 ## 怎么执行
 
@@ -114,26 +112,29 @@ bash ~/.claude/skills/mac-host/scripts/mihomo.sh                            # �
 
 ```
 自己的电脑（Orca 客户端）──┐
-                          ├─Tailscale─▶ 这台机器：以 alice 身份常驻的 orca serve（alice 端口段的 +97）
+                          ├─Tailscale─▶ 这台机器：alice 后台域里的 orca serve（alice 端口段的 +97）
 自己的手机（Orca Mobile）──┘
 ```
 
-服务端由管理员装，本人只配对。2026-11-10 在 Mac Mini 上实测（Orca 1.4.255）：
+本人 SSH 登录执行 `orca-server.sh` 就行，不用 root，不用登录桌面：
+
+- 不带参数：确保服务端在跑，打出给电脑用的 Access Link，在自己电脑的 Orca 里 Settings → Remote Orca Servers → Add Server 粘贴。
+- `--pair-mobile`：同上，打出二维码，用 Orca Mobile 扫（手机要先连上 Tailscale）。
+- `--rotate`：作废还没用过的配对码、换一个新的。没用过的配对码会一直有效，直到换掉。
+- `--port <n>`：指定端口，之后沿用；`--off`：停掉并删除服务端。
+- 配对码等同于登录凭据，只打在执行者的终端里。配置没变、服务端在跑时不重启它，重复执行不会断开终端。
+- 还没装 Orca、或装的版本没有 `orca pair` 的，用本人的 Homebrew 装进或升级 `~/Applications` 里的那份（`/Applications` 里的归别人，不动）。
+
+服务端放在哪（2026-11-10 到 11-12 在 Mac Mini 和 Mac Studio 上实测，Orca 1.4.255）：
 
 - Orca 走 SSH 目标时在这台机器上起的服务端只监听 127.0.0.1，电脑断开 15 分钟后自己退出，也不提供手机配对。
-- `orca serve` 在 macOS 上默认跑 Electron，要有人登录桌面。加 `ORCA_SERVE_RUNTIME=orcad` 改跑纯 Node 的服务端，SSH 里、没人登录桌面也能起来，5 秒就绪，终端在服务端重启后还在。
-- 本人装不了不依赖桌面的常驻服务：`orca serve service install` 装进 `gui/<UID>`，没登录桌面时报 125；本人 `launchctl bootstrap user/<UID>` 报 5。它生成的配置里也没有 `ORCA_SERVE_RUNTIME=orcad`。所以由管理员装一个 LaunchDaemon，以本人身份运行，开机就起（见「机器要满足的」）。
+- `orca serve` 在 macOS 上默认跑 Electron，要有桌面。加 `ORCA_SERVE_RUNTIME=orcad` 改跑纯 Node 的服务端，SSH 里、没人登录桌面也能起来，终端在服务端重启后还在。
+- 放在本人的 launchd 后台域（`user/<UID>`，会话类型 `Background`）：一个 LaunchAgent，写明 `LimitLoadToSessionType=Background`，本人就能 `launchctl bootstrap user/<UID>`（不写报 5）。SSH 断开后照常运行。`orca serve service install` 装进 `gui/<UID>`，没登录桌面时报 125，所以不用它。
+- 不能放在系统域（root 装的 LaunchDaemon，即使 `UserName` 是本人）：Orca 起的终端和 agent 都跟着在系统域里，读不到本人的钥匙串，mytokens 报 `-25291 No keychain is available`。后台域里能读，前提和 SSH 里一样：开机后有人登录过一次桌面，否则报 locked。
 - 服务端监听 0.0.0.0（手机配对要这样），默认只接受本机、局域网和 Tailscale 来的连接，每台设备有自己的令牌。
-
-`orca-server.sh` 用 `orca pair` 向正在运行的服务端要配对，不重启它，已经连着的设备不受影响：
-
-- 不带参数：打出给电脑用的 Access Link，在自己电脑的 Orca 里 Settings → Remote Orca Servers → Add Server 粘贴。
-- `--pair-mobile`：打出二维码，用 Orca Mobile 扫，手机要先连上 Tailscale。
-- `--rotate`：作废还没用过的配对码、换一个新的。没用过的配对码会一直有效，直到换掉。
-- 配对码等同于登录凭据，只打在执行者的终端里。
-- 本脚本旧版本装的 LaunchAgent（登录桌面时打开桌面版 Orca）会被删掉：桌面版开着时，常驻的服务端会一直等它退出。
 
 限制：
 
+- **机器重启后**：SSH 登录、不带参数执行一次 `orca-server.sh`，服务端就起来了，不用重新配对。重启后会不会在第一次 SSH 登录时自己起来，还没实测。
 - 用 SSH 目标建的 worktree 仍归电脑上的 Orca 管，电脑关了手机看不到；要手机能用，在 Remote Orca Server 下建。
-- **升级 Orca**：Orca 装在本人的 `~/Applications`，orcad 没有应用内更新。本人执行 `~/homebrew/bin/brew upgrade --cask stablyai/orca/orca`（2026-11-10 实测 1.4.249 → 1.4.255），再请管理员重新执行 35-orca-server.sh 让服务端换到新版。`homebrew.sh --upgrade` 会不会升级它没实测。服务端和电脑上的 Orca 版本差太多会连不上。
+- **升级 Orca**：Orca 装在本人的 `~/Applications`，orcad 没有应用内更新。`~/homebrew/bin/brew upgrade --cask stablyai/orca/orca`（2026-11-10 实测 1.4.249 → 1.4.255），`orca serve --supervise` 会等升级换完再重启。`homebrew.sh --upgrade` 会不会升级它没实测。服务端和电脑上的 Orca 版本差太多会连不上。
