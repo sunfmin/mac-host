@@ -51,7 +51,7 @@ dseditgroup -o checkmember -m "$(id -un)" admin
 本 skill 目录下还有两个脚本，人要的时候执行。参数和行为写在各自开头的注释里，先读再执行：
 
 - `scripts/mihomo.sh`：本人自己的代理（mihomo），国内网络用。第一次要人给订阅地址（`--subscription <地址>`，它等同于密码，不要回显）；机器重启后代理不会自己起来，下载变慢时也是，都不带参数重新执行，它会重新选一个下载够快的节点。
-- `scripts/orca-server.sh`：让人的手机在电脑关着时也能用 Orca。服务端由管理员常驻好，脚本只配对：不带参数打出给电脑的 Access Link，`--pair-mobile` 打出手机扫的二维码。配对码等同于密码，只让人在自己的终端里执行、自己看，不要读出来或转贴。服务端没装时脚本会说找管理员。
+- `scripts/orca-server.sh`：让人的手机在电脑关着时也能用 Orca。本人 SSH 里执行就行（不用 root、不用桌面）：它常驻本人的 Orca 服务端，不带参数打出给电脑的 Access Link，`--pair-mobile` 打出手机扫的二维码。配对码等同于密码，只让人在自己的终端里执行、自己看，不要读出来或转贴。报「系统级 Orca 服务端」时，转告人找管理员执行 mac-studio-setup 的 `ssh/root/35-orca-server.sh`。
 
 ## 给人看东西
 
