@@ -167,7 +167,7 @@ cat > "$NEW" <<PLIST
   <key>ProgramArguments</key>
   <array>
     <string>$ORCA_CLI</string><string>serve</string>
-    <!-- 出错时自己按递增的间隔重启；连续失败太多会放弃并以 0 退出，launchd 不再拉起（见 orca serve --help）。 -->
+    <!-- 出错时自己按递增的间隔重启。它也会以 0 退出（连续失败太多放弃时，或原因不明：2026-11-20 mac-studio 上无日志地退出），所以下面 KeepAlive 无条件拉起。 -->
     <string>--supervise</string>
     <!-- 不在日志里打配对码；用 orca pair 配对。 -->
     <string>--no-pairing</string>
@@ -182,7 +182,8 @@ cat > "$NEW" <<PLIST
     <key>PATH</key><string>$HOME/.local/bin:$HOME/.local/share/mise/shims:$HOME/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <!-- 无条件拉起：机器没人看着，服务端停了就一直连不上。要停用 launchctl bootout（本脚本 --off），不受这条影响。 -->
+  <key>KeepAlive</key><true/>
   <key>ThrottleInterval</key><integer>10</integer>
   <key>ExitTimeOut</key><integer>90</integer>
   <key>StandardOutPath</key><string>$LOG_FILE</string>
