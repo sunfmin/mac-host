@@ -252,6 +252,11 @@ running() {
 }
 serving="$(running)"
 before="$(installed)"
+# 先拉新的 tap：brew 自己 24 小时才更新一次 tap，只靠它的话新版要晚一两天才装上
+# （2026-11-21 实测：tap 发了 1.4.267，brew upgrade 仍说 1.4.266 是最新）。
+if ! out="$("$BREW" update --quiet 2>&1)"; then
+  log "brew update 失败，按本地已有的 tap 升级：$(tail -1 <<<"$out")"
+fi
 # --greedy：这个 cask 标了 auto_updates，不加的话 brew 认为它会自己更新，跳过。
 if ! out="$("$BREW" upgrade --cask --greedy "$CASK" 2>&1)"; then
   log "升级失败（装着的是 $before）：$(tail -3 <<<"$out" | tr '\n' ' ')"
