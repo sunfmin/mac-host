@@ -40,6 +40,12 @@ LABEL="orca-studio.orca-server"
 AGENT="$HOME/Library/LaunchAgents/$LABEL.plist"
 DOMAIN="user/$(id -u)"
 LOG_FILE="$HOME/Library/Logs/Orca/orca-server.log"
+# 自动更新 Orca 的 LaunchAgent（见下面「自动更新」）。
+UPDATE_LABEL="orca-studio.orca-update"
+UPDATE_AGENT="$HOME/Library/LaunchAgents/$UPDATE_LABEL.plist"
+UPDATE_SCRIPT="$HOME/Library/Application Support/orca-studio/orca-update.sh"
+UPDATE_LOG="$HOME/Library/Logs/Orca/orca-update.log"
+UPDATE_HOUR=4 UPDATE_MINUTE=30
 BREW="$HOME/homebrew/bin/brew"
 # 管理员以前装的系统级服务（mac-studio-setup 的 ssh/root/35-orca-server.sh 旧版本）。它在系统域，读不到钥匙串，
 # 而且和这里的服务端抢同一份配置。本人删不掉，要管理员执行 35-orca-server.sh 换过来。
@@ -75,8 +81,9 @@ stop_agent() {
 
 if (( OFF )); then
   stop_agent
-  rm -f "$AGENT"
-  log "已停掉并删除你的 Orca 服务端（Orca 和配对记录都还在，不带 --off 重新执行即可恢复）。"
+  launchctl bootout "$DOMAIN/$UPDATE_LABEL" >/dev/null 2>&1 || true
+  rm -f "$AGENT" "$UPDATE_AGENT" "$UPDATE_SCRIPT"
+  log "已停掉并删除你的 Orca 服务端和自动更新（Orca 和配对记录都还在，不带 --off 重新执行即可恢复）。"
   exit 0
 fi
 
@@ -193,7 +200,7 @@ cat > "$NEW" <<PLIST
 PLIST
 plutil -lint "$NEW" >/dev/null || die "LaunchAgent 格式不对：$NEW"
 
-# 配置没变、服务端也在跑，就不重启它（重启会断开它起的所有终端）。
+# 配置没变、服务端也在跑，就不重启它（终端会留着，但连着的电脑和手机要断开重连）。
 if [[ -n "$SVC_PID" ]] && cmp -s "$NEW" "$AGENT"; then
   rm -f "$NEW"
   log "已在运行，配置没变，不重启"
@@ -217,6 +224,100 @@ if ! listening; then
   die "60 秒内没在 $PORT 端口监听，日志见上面（$LOG_FILE）。"
 fi
 log "在 $PORT 端口监听，对外公布的地址 ws://$TS_IP:$PORT"
+
+# ---------------------------------------------------------------------------
+# 自动更新：服务端跑的是没有桌面的 orcad，用不上桌面版自己的更新（orca status 报
+# remoteUpdateSupport.installMode = unsupported-headless-serve）；cask 标了 auto_updates，普通的
+# brew upgrade 也会跳过它（要 --greedy）。所以另装一个 LaunchAgent，每天 $UPDATE_HOUR:$UPDATE_MINUTE（机器本地时间）
+# 升级一次，服务端跑的不是装着的版本就重启它换上。
+log "== 自动更新（$UPDATE_AGENT）"
+mkdir -p "${UPDATE_SCRIPT%/*}"
+{
+# 开头这段由本脚本填上值，下面的正文原样写入。
+cat <<UPDATE_VARS
+#!/bin/bash
+# 由 mac-host 的 scripts/orca-server.sh 生成，重新执行会覆盖。launchd 每天运行一次，记在 \$LOG。
+APP="$ORCA_APP" BREW="$BREW" CASK="$ORCA_CASK" SERVICE="$DOMAIN/$LABEL" LOG="$UPDATE_LOG"
+UPDATE_VARS
+cat <<'UPDATE_SH'
+export PATH="$HOME/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+export NONINTERACTIVE=1 HOMEBREW_NO_ANALYTICS=1 HOMEBREW_NO_ENV_HINTS=1
+cd "$HOME"
+log() { echo "$(date '+%F %T') $*" >> "$LOG"; }
+installed() { defaults read "$APP/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null; }
+# 服务端正在跑的版本。不看 brew 这次升没升：升了但没重启成的，第二天还会补上。
+running() {
+  "$APP/Contents/Resources/bin/orca" status --json 2>/dev/null \
+    | plutil -extract result.runtime.appVersion raw -o - - 2>/dev/null
+}
+serving="$(running)"
+before="$(installed)"
+# --greedy：这个 cask 标了 auto_updates，不加的话 brew 认为它会自己更新，跳过。
+if ! out="$("$BREW" upgrade --cask --greedy "$CASK" 2>&1)"; then
+  log "升级失败（装着的是 $before）：$(tail -3 <<<"$out" | tr '\n' ' ')"
+  exit 1
+fi
+now="$(installed)"
+[[ "$now" == "$before" ]] || log "已升级 $before → $now"
+if [[ "$serving" == "$now" ]]; then
+  log "已是最新：$now"
+  exit 0
+fi
+# brew 装上的新版带着 quarantine（「从网上下载的」），没有桌面时没人能点首次打开的对话框。去掉它，再先空跑一次，
+# 让系统的首次检查在重启服务端之前做完（2026-11-21 在 mac-studio 上 brew 原地升级的新版 1 秒就过了；
+# 复制到 /tmp 的副本却卡了 5 分钟以上，原因没查清）。等不到就不重启，正在跑的服务端照常用。
+xattr -dr com.apple.quarantine "$APP" 2>/dev/null
+"$APP/Contents/Resources/bin/orca" --version >/dev/null 2>&1 &
+p=$!
+for (( i = 0; i < 900; i++ )); do kill -0 "$p" 2>/dev/null || break; sleep 1; done
+if kill -0 "$p" 2>/dev/null; then
+  kill "$p" 2>/dev/null
+  log "新版 $now 15 分钟还没启动起来（系统的首次检查没做完），这次不重启服务端（还在跑 ${serving:-?}）"
+  exit 1
+fi
+# 终端不跟着重启：它们在 Orca 的终端守护进程里，新服务端接回去。2026-11-21 在 mac-studio 上实测，
+# 1.4.254 → 1.4.266 重启服务端，3 个跑了 5–23 小时的 claude 会话都还在，终端照常 connected。
+launchctl kickstart -k "$SERVICE"
+for (( i = 0; i < 180; i++ )); do
+  serving2="$(running)"
+  [[ "$serving2" == "$now" ]] && break
+  sleep 1
+done
+if [[ "$serving2" == "$now" ]]; then
+  log "重启了服务端：${serving:-（原来没在跑）} → $now"
+else
+  log "重启了服务端，3 分钟后在跑的是 ${serving2:-（连不上）}，应该是 $now：看 ~/Library/Logs/Orca/orca-server.log"
+  exit 1
+fi
+UPDATE_SH
+} > "$UPDATE_SCRIPT"
+chmod 755 "$UPDATE_SCRIPT"
+NEW_UPDATE="$(mktemp)"
+cat > "$NEW_UPDATE" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 由 mac-host 的 scripts/orca-server.sh 生成，重新执行会覆盖。 -->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>$UPDATE_LABEL</string>
+  <key>LimitLoadToSessionType</key><string>Background</string>
+  <key>WorkingDirectory</key><string>$HOME</string>
+  <key>ProgramArguments</key>
+  <array><string>/bin/bash</string><string>$UPDATE_SCRIPT</string></array>
+  <!-- 机器本地时间，人一般不在用。机器睡着错过了，醒来后补跑一次。 -->
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>$UPDATE_HOUR</integer><key>Minute</key><integer>$UPDATE_MINUTE</integer></dict>
+  <key>StandardOutPath</key><string>$UPDATE_LOG</string>
+  <key>StandardErrorPath</key><string>$UPDATE_LOG</string>
+</dict>
+</plist>
+PLIST
+plutil -lint "$NEW_UPDATE" >/dev/null || die "LaunchAgent 格式不对：$NEW_UPDATE"
+launchctl bootout "$DOMAIN/$UPDATE_LABEL" >/dev/null 2>&1 || true
+mv "$NEW_UPDATE" "$UPDATE_AGENT"
+launchctl bootstrap "$DOMAIN" "$UPDATE_AGENT"
+log "每天 $UPDATE_HOUR:$UPDATE_MINUTE（机器本地时间）升级 Orca，有新版就重启服务端换上（终端不受影响）；记在 $UPDATE_LOG"
+log "  马上跑一次：launchctl kickstart $DOMAIN/$UPDATE_LABEL"
 
 # ---------------------------------------------------------------------------
 # orca pair 向正在运行的服务端要一个配对，不重启它，已经连着的设备不受影响。

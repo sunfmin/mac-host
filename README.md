@@ -137,4 +137,4 @@ bash ~/.claude/skills/mac-host/scripts/mihomo.sh                            # �
 
 - **机器重启后**：SSH 登录、不带参数执行一次 `orca-server.sh`，服务端就起来了，不用重新配对。重启后会不会在第一次 SSH 登录时自己起来，还没实测。
 - 用 SSH 目标建的 worktree 仍归电脑上的 Orca 管，电脑关了手机看不到；要手机能用，在 Remote Orca Server 下建。
-- **升级 Orca**：Orca 装在本人的 `~/Applications`，orcad 没有应用内更新。`~/homebrew/bin/brew upgrade --cask stablyai/orca/orca`（2026-11-10 实测 1.4.249 → 1.4.255），`orca serve --supervise` 会等升级换完再重启。`homebrew.sh --upgrade` 会不会升级它没实测。服务端和电脑上的 Orca 版本差太多会连不上。
+- **升级 Orca**：Orca 装在本人的 `~/Applications`，orcad 没有应用内更新（`orca status --json` 报 `unsupported-headless-serve`）。`orca-server.sh` 装了一个每天 4:30（机器本地时间）运行的 LaunchAgent `orca-studio.orca-update`：用本人的 Homebrew `brew upgrade --cask --greedy`（cask 标了 `auto_updates`，不加 `--greedy` 会跳过），服务端跑的不是装着的版本就重启它，记在 `~/Library/Logs/Orca/orca-update.log`；马上跑一次用 `launchctl kickstart user/$(id -u)/orca-studio.orca-update`。重启服务端不会关掉终端：2026-11-21 在 mac-studio 上从 1.4.254 换到 1.4.266，3 个跑了 5–23 小时的 claude 会话都还在，终端照常 connected。brew 升级只换掉磁盘上的 App，正在跑的服务端照旧是老版本，要重启才换上（同一天实测）。服务端和电脑上的 Orca 版本差太多会连不上。
