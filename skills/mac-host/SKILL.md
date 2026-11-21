@@ -55,6 +55,8 @@ dseditgroup -o checkmember -m "$(id -un)" admin
 
 ## 给人看东西
 
+先执行 `scripts/where-is-the-user.sh`。打印 `local` 才能用这台机器的桌面和剪贴板；打印 `remote` 就照下面做。`SSH_CONNECTION` 是空的不代表人在跟前：Orca 远程连进来的终端就没有它，屏幕前也可能坐着别的账号的人。
+
 这台机器的桌面和剪贴板都不是人手边的那个：
 
 - **看文件**（图片、页面、文档……）：用 `orca file open <绝对路径> --focus`，它会在人的 Orca 里打开一个标签页。路径要在某个 Orca worktree 里面；临时目录（`/tmp`、`$TMPDIR`）里的文件先复制到当前 repo 里被 git 忽略的目录再打开。多个文件时，前面几个不带 `--focus` 逐个打开，最后对要先看的那个带 `--focus`。不要用这台机器的桌面程序打开（`open`、`qlmanage`、Preview、Safari、Finder……），没人看得到。

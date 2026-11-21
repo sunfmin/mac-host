@@ -10,12 +10,13 @@ skill 本身在 [`skills/mac-host/SKILL.md`](skills/mac-host/SKILL.md)，讲三�
 npx skills add sunfmin/mac-host -g
 ```
 
-skill 目录里带着三个脚本，装 skill 时一起装上，人和 agent 都在机器上直接执行（见「怎么执行」）：
+skill 目录里带着四个脚本，装 skill 时一起装上，人和 agent 都在机器上直接执行（见「怎么执行」）：
 
 | 脚本 | 用途 |
 | --- | --- |
 | `scripts/homebrew.sh` | 自己的 Homebrew，装命令行软件和应用 |
 | `scripts/mihomo.sh` | 国内网络用：自己的代理 |
+| `scripts/where-is-the-user.sh` | 人在不在这台机器跟前：打印 `local` 或 `remote`，给人看东西前先执行 |
 | `scripts/orca-server.sh` | 电脑关着时手机也能用 Orca：常驻自己的 Orca 服务端，给电脑和手机配对 |
 
 ## 机器要满足的
