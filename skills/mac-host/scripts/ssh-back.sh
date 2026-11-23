@@ -14,7 +14,9 @@
 #
 # 你的电脑上（都不要 admin，MDM 管的标准账号也行）：
 #   - 一个你自己的 sshd（系统自带的 /usr/sbin/sshd，非 root 运行），只监听 127.0.0.1:2222，只认公钥，
-#     只许你本人登录。系统「远程登录」不用开。配置、主机密钥、日志在 ~/.ssh/ssh-back/。
+#     只许你本人登录。系统「远程登录」不用开。配置、主机密钥、日志在 ~/.local/state/ssh-back/。
+#     不放在 ~/.ssh 下：主机密钥按 sshd 的要求不加密，1Password 会把 ~/.ssh 里不加密的私钥报成问题。
+#     旧版放在 ~/.ssh/ssh-back/，再执行一次会原样搬过来（主机密钥不变，远程钉住的指纹照样有效）。
 #   - 每台远程一条隧道。sshd 和隧道都是 LaunchAgent（ssh-back.sshd、ssh-back.tunnel.<远程>），
 #     登录桌面后自动起来，断了 30 秒后自己重连。电脑睡眠、关机、没登录时连不回来。
 #   - ~/.ssh/authorized_keys 里每台远程一行，带 from="127.0.0.1,::1"，行尾注释是 ssh-back:<远程>。
@@ -33,7 +35,8 @@ trap 'rc=$?; printf "[%s] ERROR: 第 %s 行失败，退出码 %s。\n" "$(date "
 [[ $EUID -ne 0 ]] || die "用你自己的账号执行，不要用 root。"
 
 SSHD_PORT=2222
-DIR="$HOME/.ssh/ssh-back"
+DIR="$HOME/.local/state/ssh-back"
+OLD_DIR="$HOME/.ssh/ssh-back"
 AGENTS="$HOME/Library/LaunchAgents"
 SSHD_LABEL="ssh-back.sshd"
 DOMAIN="gui/$(id -u)"
@@ -82,6 +85,9 @@ write_plist() { # label, args...
 }
 
 ensure_sshd() {
+  if [[ -d "$OLD_DIR" && ! -e "$DIR" ]]; then
+    mkdir -p "$(dirname "$DIR")"; mv "$OLD_DIR" "$DIR"; log "状态目录从 $OLD_DIR 搬到 $DIR"
+  fi
   mkdir -p "$DIR"; chmod 700 "$HOME/.ssh" "$DIR"
   [[ -f "$DIR/ssh_host_ed25519_key" ]] || ssh-keygen -q -t ed25519 -N '' -C "ssh-back@$ALIAS" -f "$DIR/ssh_host_ed25519_key"
   cat > "$DIR/sshd_config" <<EOF
