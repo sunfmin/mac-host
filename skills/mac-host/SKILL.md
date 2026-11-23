@@ -64,4 +64,5 @@ dseditgroup -o checkmember -m "$(id -un)" admin
   - `uv run --no-project python -m http.server <端口> --bind 127.0.0.1`，在页面所在目录后台跑；
   - `orca tab create --url http://127.0.0.1:<端口>/<文件名>`。Orca 的内置浏览器能访问这台机器的 `127.0.0.1`，不用监听公网或 tailnet 地址；
   - 确认渲染出来了：`orca eval --expression 'document.title'` 返回页面标题。用完把服务器停掉。
+- **要到人的电脑上做事**：`~/.ssh/config` 里有 `# >>> ssh-back <名字>` 一段的，`ssh <名字>` 就登到人自己的电脑（人用 `scripts/ssh-back.sh` 接通的）。人的电脑睡眠时连不上，直接告诉人。
 - **要人拿去别处发的文本**：在回复里给出全文。`pbcopy` 放进的是这台机器的剪贴板，人那边拿不到，不要用它代替全文。

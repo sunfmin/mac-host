@@ -10,7 +10,7 @@ skill 本身在 [`skills/mac-host/SKILL.md`](skills/mac-host/SKILL.md)，讲三�
 npx skills add sunfmin/mac-host -g
 ```
 
-skill 目录里带着四个脚本，装 skill 时一起装上，人和 agent 都在机器上直接执行（见「怎么执行」）：
+skill 目录里带着这些脚本，装 skill 时一起装上。`ssh-back.sh` 在人自己的电脑上执行，其余的人和 agent 都在机器上直接执行（见「怎么执行」）：
 
 | 脚本 | 用途 |
 | --- | --- |
@@ -18,6 +18,7 @@ skill 目录里带着四个脚本，装 skill 时一起装上，人和 agent 都
 | `scripts/mihomo.sh` | 国内网络用：自己的代理 |
 | `scripts/where-is-the-user.sh` | 人在不在这台机器跟前：打印 `local` 或 `remote`，给人看东西前先执行 |
 | `scripts/orca-server.sh` | 电脑关着时手机也能用 Orca：常驻自己的 Orca 服务端，给电脑和手机配对 |
+| `scripts/ssh-back.sh` | 在**自己电脑**上执行：让这台机器 SSH 回自己的电脑（反向隧道，不改 Tailscale 配置，不要 admin） |
 
 ## 机器要满足的
 
@@ -32,7 +33,7 @@ skill 和脚本假定机器已经由管理员配好以下几点，它们自己�
   export PATH="$PATH:$HOME/.pixi/bin"   # brew 要从源码编的命令行软件走 pixi（见 SKILL.md）
   ```
 - 装了 Xcode Command Line Tools。
-- `~/.zshenv` 里 `export DEV_PORT_BASE=<数字>`：本人的端口段起点，每人 100 个，互不重叠。`mihomo.sh` 用最后两个（`+98` 代理，`+99` 控制接口），常驻的 Orca 服务端用 `+97`。
+- `~/.zshenv` 里 `export DEV_PORT_BASE=<数字>`：本人的端口段起点，每人 100 个，互不重叠。`mihomo.sh` 用最后两个（`+98` 代理，`+99` 控制接口），常驻的 Orca 服务端用 `+97`。`ssh-back.sh` 的隧道用 `+96`。
 - 用 `orca-server.sh` 的，还要：
   - Tailscale ACL 让本人的设备连得到这台机器上本人的 `$DEV_PORT_BASE+97`。
   - 应用防火墙自动放行有开发者签名的程序（`socketfilterfw --setallowsigned on --setallowsignedapp on`）：监听端口的是 Orca 自带的 node，有签名。
@@ -139,3 +140,17 @@ bash ~/.claude/skills/mac-host/scripts/mihomo.sh                            # �
 - **机器重启后**：SSH 登录、不带参数执行一次 `orca-server.sh`，服务端就起来了，不用重新配对。重启后会不会在第一次 SSH 登录时自己起来，还没实测。
 - 用 SSH 目标建的 worktree 仍归电脑上的 Orca 管，电脑关了手机看不到；要手机能用，在 Remote Orca Server 下建。
 - **升级 Orca**：Orca 装在本人的 `~/Applications`，orcad 没有应用内更新（`orca status --json` 报 `unsupported-headless-serve`）。`orca-server.sh` 装了一个每天 4:30（机器本地时间）运行的 LaunchAgent `orca-studio.orca-update`：用本人的 Homebrew `brew upgrade --cask --greedy`（cask 标了 `auto_updates`，不加 `--greedy` 会跳过），服务端跑的不是装着的版本就重启它，记在 `~/Library/Logs/Orca/orca-update.log`；马上跑一次用 `launchctl kickstart user/$(id -u)/orca-studio.orca-update`。重启服务端不会关掉终端：2026-11-21 在 mac-studio 上从 1.4.254 换到 1.4.266，3 个跑了 5–23 小时的 claude 会话都还在，终端照常 connected。brew 升级只换掉磁盘上的 App，正在跑的服务端照旧是老版本，要重启才换上（同一天实测）。服务端和电脑上的 Orca 版本差太多会连不上。
+
+## 让这台机器 SSH 回自己的电脑（`scripts/ssh-back.sh`）
+
+在**自己的电脑**上执行，前提是从这台电脑 `ssh` 得到远程机器：
+
+```sh
+bash ~/.claude/skills/mac-host/scripts/ssh-back.sh felix@mac-studio   # 接通（可以重复执行）
+bash ~/.claude/skills/mac-host/scripts/ssh-back.sh --status          # 看隧道
+bash ~/.claude/skills/mac-host/scripts/ssh-back.sh --remove felix@mac-studio
+```
+
+接通后在远程机器上 `ssh <电脑的 LocalHostName，小写>`。远程直连电脑常被 Tailscale ACL 挡住（tagged-devices 连不了个人设备），所以由电脑开 `ssh -R` 隧道出去；电脑上的 sshd 是本人跑的系统 sshd，只听 `127.0.0.1`、只认公钥，不用开「远程登录」，MDM 管的标准账号也能用。电脑睡眠或没登录时连不回来。细节在脚本开头的注释。
+
+2026-11-23 实测（MacBook Air 标准账号 → Mac Studio）：首次接通 5 秒；杀掉隧道进程后 30 秒内自动重连；`--remove` 后两边都清干净，再接通照常。
