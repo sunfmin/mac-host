@@ -19,6 +19,12 @@
 #     旧版放在 ~/.ssh/ssh-back/，再执行一次会原样搬过来（主机密钥不变，远程钉住的指纹照样有效）。
 #   - 每台远程一条隧道。sshd 和隧道都是 LaunchAgent（ssh-back.sshd、ssh-back.tunnel.<远程>），
 #     登录桌面后自动起来，断了 30 秒后自己重连。电脑睡眠、关机、没登录时连不回来。
+#   - 隧道由本脚本的 --run 跑：除了 ssh 自己的心跳，每 60 秒从远程连一次隧道端口，读不到本机 sshd 的
+#     「SSH-2.0-」开头，而且这段时间隧道 ssh 几乎没收到字节（< 64 KB），就算坏；连续 2 次坏就杀掉隧道让
+#     launchd 重起。只靠心跳不够：2026-11-24 实测，外层 SSH 连接和心跳都正常，Tailscale SSH（远程的
+#     tailscaled）却不再读隧道端口上的连接（一个 rsync 的 1.4 MB 堆在那里 25 分钟以上），新连接卡在握手
+#     （Connection timed out during banner exchange），隧道进程一直不退。看字节是为了不误杀：远程往电脑
+#     推 10 MB 时（经东京中转约 1 Mbit/s，79 秒），新连接排在后面，握手要 64 秒，但隧道是好的。
 #   - ~/.ssh/authorized_keys 里每台远程一行，带 from="127.0.0.1,::1"，行尾注释是 ssh-back:<远程>。
 # 远程机器上：
 #   - 专用密钥 ~/.ssh/id_ed25519_back（没有就生成，私钥不出那台机器）。
@@ -35,6 +41,9 @@ trap 'rc=$?; printf "[%s] ERROR: 第 %s 行失败，退出码 %s。\n" "$(date "
 [[ $EUID -ne 0 ]] || die "用你自己的账号执行，不要用 root。"
 
 SSHD_PORT=2222
+PROBE_INTERVAL="${SSH_BACK_PROBE_INTERVAL:-60}" # 环境变量只给测试用
+BUSY_BYTES=65536
+SELF="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 DIR="$HOME/.local/state/ssh-back"
 OLD_DIR="$HOME/.ssh/ssh-back"
 AGENTS="$HOME/Library/LaunchAgents"
@@ -174,9 +183,7 @@ connect() {
   set_auth_line "$target" "from=\"127.0.0.1,::1\",no-agent-forwarding $pub ssh-back:$target"
   log "远程公钥已授权，隧道端口 $target 上的 127.0.0.1:$rport"
   label="$(tunnel_label "$target")"
-  write_plist "$label" /usr/bin/ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes \
-    -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ControlMaster=no -o ControlPath=none \
-    -R "127.0.0.1:$rport:127.0.0.1:$SSHD_PORT" "$target"
+  write_plist "$label" /bin/bash "$SELF" --run "$target" "$rport"
   local i; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
     if remote "$target" 'ssh -o BatchMode=yes -o ConnectTimeout=5 "$1" "echo BACK-OK" 2>&1 || true' "$ALIAS" | grep -q '^BACK-OK$'; then
       log "接通了：在 $target 上执行 ssh $ALIAS"; return 0
@@ -184,6 +191,56 @@ connect() {
     sleep 2
   done
   die "隧道起了，但远程还连不回来。看 $DIR/$label.log（端口被占用时会写 remote port forwarding failed）"
+}
+
+# 远程：连 127.0.0.1:<端口>，10 秒内读到「SSH-2.0-」打 BANNER-OK，否则打 NO-BANNER 和原因。
+REMOTE_PROBE='port="$1"
+/usr/bin/perl -MIO::Socket::INET -e '\''
+  $SIG{ALRM} = sub { print "NO-BANNER timeout\n"; exit };
+  alarm 10;
+  my $s = IO::Socket::INET->new(PeerAddr => "127.0.0.1", PeerPort => $ARGV[0], Timeout => 5)
+    or do { print "NO-BANNER connect: $!\n"; exit };
+  my $l = <$s>;
+  print(defined $l && $l =~ /^SSH-2\.0-/ ? "BANNER-OK\n" : "NO-BANNER got: " . ($l // "eof") . "\n");
+'\'' "$port"'
+
+# 进程从网络收到的总字节数（nettop -n 不查 DNS，马上返回）。
+bytes_in() { nettop -P -L 1 -n -x -p "$1" -J bytes_in </dev/null 2>/dev/null | awk -F, 'NR==2{print $2+0; f=1} END{if(!f) print 0}'; }
+
+# launchd 跑的隧道：起 ssh -R，再定时从远程验证隧道端口真能连到本机 sshd。坏了就退出，launchd 30 秒后重起。
+run_tunnel() {
+  local target="$1" rport="$2" pid out fails=0
+  trap - ERR; set +e
+  /usr/bin/ssh -N -o BatchMode=yes -o ExitOnForwardFailure=yes \
+    -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ControlMaster=no -o ControlPath=none \
+    -R "127.0.0.1:$rport:127.0.0.1:$SSHD_PORT" "$target" &
+  pid=$!
+  trap 'kill "$pid" 2>/dev/null; exit 0' TERM INT
+  log "隧道 ssh 进程 $pid，远程 127.0.0.1:$rport" >&2
+  local before=0 now
+  while kill -0 "$pid" 2>/dev/null; do
+    before="$(bytes_in "$pid")"
+    sleep "$PROBE_INTERVAL" & wait $!
+    kill -0 "$pid" 2>/dev/null || break
+    out="$(printf '%s' "$REMOTE_PROBE" | /usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=10 \
+      -o ControlMaster=no -o ControlPath=none "$target" "/bin/bash -c \"\$(cat)\" _ $rport" 2>&1)"
+    now="$(bytes_in "$pid")"
+    case "$out" in
+      *BANNER-OK*) fails=0 ;;
+      *NO-BANNER*)
+        # 远程往电脑传大文件时（链路只有 1–2 Mbit/s），新连接排在后面，握手也会超时，但字节一直在进来，不算坏。
+        if (( now - before >= BUSY_BYTES )); then
+          fails=0; log "探测超时，但这 ${PROBE_INTERVAL} 秒收了 $(( (now - before) / 1024 )) KB，隧道忙，不算失败" >&2
+        else
+          fails=$((fails + 1)); log "探测失败 $fails/2，这 ${PROBE_INTERVAL} 秒只收了 $((now - before)) 字节：$(printf '%s' "$out" | grep NO-BANNER)" >&2
+          if [[ $fails -ge 2 ]]; then log "隧道不通，杀掉重起" >&2; kill "$pid" 2>/dev/null; kill -CONT "$pid" 2>/dev/null; wait "$pid"; exit 1; fi
+        fi ;;
+      *) ;; # 远程本身连不上：隧道多半也断了，交给 ssh 的心跳判断，不算一次失败。
+    esac
+  done
+  wait "$pid"; local rc=$?
+  log "隧道 ssh 退出，退出码 $rc" >&2
+  exit 1
 }
 
 remove() {
@@ -209,8 +266,14 @@ status() {
     label="$(basename "$f" .plist)"
     st="$(launchctl print "$DOMAIN/$label" 2>/dev/null | awk '/^\tstate =/{print $3; exit}' || true)"
     args="$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments' "$f" | sed -e '1d' -e '$d' -e 's/^ *//')"
-    printf '%-24s 远程 %-22s %s\n' "$(printf '%s\n' "$args" | tail -1)" \
-      "$(printf '%s\n' "$args" | sed -n 's/^127\.0\.0\.1:\([0-9]*\):.*/127.0.0.1:\1/p')" "${st:-not loaded}"
+    # 参数是 /bin/bash <本脚本> --run <远程> <端口>；没有 --run 的是旧版直接跑 ssh 的，再执行一次接通就换成新的。
+    if printf '%s\n' "$args" | grep -qx -- '--run'; then
+      printf '%-24s 远程 127.0.0.1:%-12s %s\n' "$(printf '%s\n' "$args" | sed -n '/^--run$/{n;p;}')" \
+        "$(printf '%s\n' "$args" | tail -1)" "${st:-not loaded}"
+    else
+      printf '%-24s 远程 %-22s %s（旧版，没有探测，再执行一次接通）\n' "$(printf '%s\n' "$args" | tail -1)" \
+        "$(printf '%s\n' "$args" | sed -n 's/^127\.0\.0\.1:\([0-9]*\):.*/127.0.0.1:\1/p')" "${st:-not loaded}"
+    fi
   done
 }
 
@@ -218,6 +281,7 @@ case "${1:-}" in
   ""|-h|--help) sed -n '2,10p' "$0"; exit 0 ;;
   --status) status ;;
   --remove) [[ -n "${2:-}" ]] || die "用法：ssh-back.sh --remove <远程>"; remove "$2" ;;
+  --run) [[ -n "${3:-}" ]] || die "用法（launchd 用）：ssh-back.sh --run <远程> <端口>"; run_tunnel "$2" "$3" ;;
   -*) die "不认识的参数 $1" ;;
   *) t="$1"; shift; p=""
      if [[ "${1:-}" == "--port" ]]; then [[ -n "${2:-}" ]] || die "--port 要跟端口号"; p="$2"; fi

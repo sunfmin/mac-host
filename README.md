@@ -151,6 +151,6 @@ bash ~/.claude/skills/mac-host/scripts/ssh-back.sh --status          # 看隧道
 bash ~/.claude/skills/mac-host/scripts/ssh-back.sh --remove felix@mac-studio
 ```
 
-接通后在远程机器上 `ssh <电脑的 LocalHostName，小写>`。远程直连电脑常被 Tailscale ACL 挡住（tagged-devices 连不了个人设备），所以由电脑开 `ssh -R` 隧道出去；电脑上的 sshd 是本人跑的系统 sshd，只听 `127.0.0.1`、只认公钥，不用开「远程登录」，MDM 管的标准账号也能用。电脑睡眠或没登录时连不回来。细节在脚本开头的注释。
+接通后在远程机器上 `ssh <电脑的 LocalHostName，小写>`。远程直连电脑常被 Tailscale ACL 挡住（tagged-devices 连不了个人设备），所以由电脑开 `ssh -R` 隧道出去；电脑上的 sshd 是本人跑的系统 sshd，只听 `127.0.0.1`、只认公钥，不用开「远程登录」，MDM 管的标准账号也能用。电脑睡眠或没登录时连不回来。隧道除了 ssh 心跳，每 60 秒还从远程连一次隧道端口，读不到电脑 sshd 的握手、这段时间隧道也几乎没收到数据，就算坏，连续 2 次坏就重起隧道（外层连接活着、转发却卡死时，光靠心跳发现不了；远程正往电脑传大文件时握手也会慢，但数据在进来，不算坏）。细节在脚本开头的注释。
 
 2026-11-23 实测（MacBook Air 标准账号 → Mac Studio）：首次接通 5 秒；杀掉隧道进程后 30 秒内自动重连；`--remove` 后两边都清干净，再接通照常。
