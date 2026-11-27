@@ -136,7 +136,9 @@ if [[ -z "$ORCA_APP" ]] || ! "$ORCA_APP/Contents/Resources/bin/orca" pair --help
   # 之后每个调 orca 的进程都排在它后面。先去掉，去不掉就停在这里。
   if ! err="$(xattr -dr com.apple.quarantine "$ORCA_APP" 2>&1)" \
      || xattr -p com.apple.quarantine "$ORCA_APP" >/dev/null 2>&1; then
-    die "去不掉 $ORCA_APP 的 quarantine：${err:-执行后属性还在}"
+    fix=""
+    [[ "$err" == *"Operation not permitted"* ]] && fix="；缺「App 管理」权限，修法见 README「机器要满足的」（https://github.com/sunfmin/mac-host#app-management）"
+    die "去不掉 $ORCA_APP 的 quarantine：$(tail -1 <<<"${err:-执行后属性还在}")$fix"
   fi
   "$ORCA_APP/Contents/Resources/bin/orca" pair --help >/dev/null 2>&1 \
     || die "装好后 $ORCA_APP 还是没有 orca pair，见上面 brew 的输出。"
@@ -279,10 +281,13 @@ fi
 # 复制到 /tmp 的副本却卡了 5 分钟以上，原因没查清）。等不到就不重启，正在跑的服务端照常用。
 # 去完要核对：2026-11-27 1.4.278 的 quarantine 没去掉（报错被吞了，原因没查到），空跑等对话框 15 分钟，
 # 之后 PATH 上的 orca 都指向这个新版，调用它的进程都卡在同一个对话框上，factorium 的 worker 全停，人点了「允许」才好。
-# 去不掉就不空跑，在日志里写明，让人看到。
+# 去不掉就不空跑，在日志里写明，让人看到。11-27、11-28 去不掉的原因是 Operation not permitted：
+# /bin/bash 没有「App 管理」权限（mac-host README「机器要满足的」）。
 if ! err="$(xattr -dr com.apple.quarantine "$APP" 2>&1)" \
    || xattr -p com.apple.quarantine "$APP" >/dev/null 2>&1; then
-  log "去不掉新版 $now 的 quarantine，调用 orca 会卡在「允许打开」对话框上：${err:-执行后属性还在}"
+  fix=""
+  [[ "$err" == *"Operation not permitted"* ]] && fix="；/bin/bash 缺「App 管理」权限，修法见 https://github.com/sunfmin/mac-host#app-management"
+  log "去不掉新版 $now 的 quarantine，调用 orca 会卡在「允许打开」对话框上：$(tail -1 <<<"${err:-执行后属性还在}")$fix"
   exit 1
 fi
 "$APP/Contents/Resources/bin/orca" --version >/dev/null 2>&1 &

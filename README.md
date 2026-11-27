@@ -37,6 +37,7 @@ skill 和脚本假定机器已经由管理员配好以下几点，它们自己�
 - 用 `orca-server.sh` 的，还要：
   - Tailscale ACL 让本人的设备连得到这台机器上本人的 `$DEV_PORT_BASE+97`。
   - 应用防火墙自动放行有开发者签名的程序（`socketfilterfw --setallowsigned on --setallowsignedapp on`）：监听端口的是 Orca 自带的 node，有签名。
+  - <a id="app-management"></a>`/bin/bash` 有「App 管理」权限：系统设置 → 隐私与安全性 → App 管理，点「+」，按 ⌘⇧G 输入 `/bin/bash`，打开开关。每天的升级任务是 launchd 起的 `/bin/bash`，没有这个权限时 macOS 不让它去掉新版 Orca.app 的 quarantine（`xattr: [Errno 1] Operation not permitted`），新版一启动就弹「允许打开」，所有调 `orca` 的进程都卡在那里，直到有人点。这一项只能在桌面上点（屏幕共享也行），或由 MDM 推 PPPC 描述文件，命令行和 sudo 都改不了。2026-11-28 在 mac-studio 实测：加之前 11-27、11-28 两天的升级都报 `Operation not permitted`，加之后同样从 launchd 起的 `/bin/bash` 去掉了。
   - 想在 Orca 起的终端里用钥匙串（例如 mytokens）的，这台机器开机后要有人登录过一次桌面（屏幕共享也行），同 SSH 里一样。
 
 ## 怎么执行
